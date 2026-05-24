@@ -1,0 +1,3 @@
+*.obj
+vc60.idb
+build/
