@@ -3,11 +3,13 @@
 void context_init();
 
 int start_server(const char* host, unsigned short port);
+void stop_server(void);
 int recv_packet(char* out, int outsz);
 int send_packet(const char* payload);
 int handle_packet(const char* pkt, char* reply, int replysz);
 
 int launch_debuggee(const char* cmdline);
+void cleanup_debuggee(int terminate);
 void read_memory_packet(const char* pkt, char* out, int outsz);
 void read_all_registers(char* out, int outsz);
 void read_one_register(const char* pkt, char* out, int outsz);

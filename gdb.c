@@ -249,6 +249,14 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
         strcpy(reply, "OK");
         RETURN_HANDLE_PACKET(1);
     }
+    if (strncmp(pkt, "QDisableRandomization", 21) == 0) {
+        reply[0] = '\0';
+        RETURN_HANDLE_PACKET(1);
+    }
+    if (strncmp(pkt, "vRun", 4) == 0) {
+        make_stop_reply(reply, replysz);
+        RETURN_HANDLE_PACKET(1);
+    }
     // ---------------------------------------------------------------------------------
     if (strcmp(pkt, "qHostInfo") == 0) {
         char* p = reply;
@@ -428,6 +436,15 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
 
         RETURN_HANDLE_PACKET(1);
     }
+    if (strcmp(pkt, "qC") == 0) {
+        DWORD tid = g_ctx.dbg.current_tid;
+
+        if (tid == 0 && g_ctx.dbg.thread_count > 0)
+            tid = g_ctx.dbg.threads[0].tid;
+
+        sprintf(reply, "QC%lx", tid);
+        RETURN_HANDLE_PACKET(1);
+    }
     // ---------------------------------------------------------------------------------
     if (strncmp(pkt, "qMemoryRegionInfo:", 18) == 0) {
         RETURN_HANDLE_PACKET(handle_qMemoryRegionInfo(pkt, reply, replysz));
@@ -440,8 +457,8 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
     // ---------------------------------------------------------------------------------
     // IDA's ctrl+f2
     if (pkt[0] == 'k') {
-        TerminateProcess(g_ctx.dbg.process_handle, 0);
-        ExitProcess(0);
+        cleanup_debuggee(1);
+        RETURN_HANDLE_PACKET(PACKET_HANDLED);
     }
     // ---------------------------------------------------------------------------------
     if (strncmp(pkt, "vFile:", 6) == 0) {

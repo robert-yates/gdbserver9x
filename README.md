@@ -56,6 +56,12 @@ set GDBLOG=1
 gdbserver9x.exe 0.0.0.0:31337 C:\targets\hello.exe
 ```
 
+```bat
+set GDBRESTART=1
+```
+
+will restart the server on exit
+
 ## Limitations
 
 - Only 32-bit Windows debuggees are in scope.
@@ -64,6 +70,11 @@ gdbserver9x.exe 0.0.0.0:31337 C:\targets\hello.exe
   event and does not process arbitrary incoming RSP packets.
 - Hardware breakpoints, watchpoints, and general memory writes are not currently
   implemented.
+
+## Histoy
+
+v1.0 - inital release not battle tested
+v1.1 - allows round trip debugging via `GDBRESTART` var
 
 have fun  
 /yates.

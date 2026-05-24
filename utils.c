@@ -7,6 +7,7 @@
 #undef printf
 
 int do_logging = 0;
+int do_restart = 0;
 
 int gdb_log_printf(const char* fmt, ...) {
     va_list ap;

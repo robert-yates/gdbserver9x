@@ -13,6 +13,7 @@
 
 
 extern int do_logging;
+extern int do_restart;
 int gdb_log_printf(const char* fmt, ...);
 
 #define printf gdb_log_printf
@@ -53,6 +54,7 @@ struct modules {
 
 struct rsp_context {
     SOCKET client;
+    int wsa_started;
     char pkt[MAX_PACKET];
     char reply[MAX_PACKET];
     int no_ack;

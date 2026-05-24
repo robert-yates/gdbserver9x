@@ -4,6 +4,30 @@
 #include "stdio.h"
 #include <winsock2.h>
 
+static char s_recv_buf[4096];
+static int s_recv_len = 0;
+static int s_recv_pos = 0;
+
+static void reset_recv_buffer(void) {
+    s_recv_len = 0;
+    s_recv_pos = 0;
+}
+
+void stop_server(void) {
+    if (g_ctx.rsp.client != INVALID_SOCKET) {
+        shutdown(g_ctx.rsp.client, SD_BOTH);
+        closesocket(g_ctx.rsp.client);
+        g_ctx.rsp.client = INVALID_SOCKET;
+    }
+
+    reset_recv_buffer();
+
+    if (g_ctx.rsp.wsa_started) {
+        WSACleanup();
+        g_ctx.rsp.wsa_started = 0;
+    }
+}
+
 int start_server(const char* host, unsigned short port) {
 
     WSADATA wsa;
@@ -16,10 +40,12 @@ int start_server(const char* host, unsigned short port) {
         printf("[start_server]: WSAStartup failed\n");
         return 0;
     }
+    g_ctx.rsp.wsa_started = 1;
 
     s = socket(AF_INET, SOCK_STREAM, IPPROTO_TCP);
     if (s == INVALID_SOCKET) {
         printf("[start_server]: socket failed\n");
+        stop_server();
         return 0;
     }
 
@@ -32,6 +58,7 @@ int start_server(const char* host, unsigned short port) {
         if (bind_addr == INADDR_NONE) {
             fprintf(stderr, "[start_server]: invalid host '%s'\n", host);
             closesocket(s);
+            stop_server();
             return 0;
         }
     }
@@ -44,12 +71,14 @@ int start_server(const char* host, unsigned short port) {
     if (bind(s, (struct sockaddr*)&a, sizeof(a)) == SOCKET_ERROR) {
         fprintf(stderr, "[start_server]: bind failed\n");
         closesocket(s);
+        stop_server();
         return 0;
     }
 
     if (listen(s, 1) == SOCKET_ERROR) {
         fprintf(stderr, "[start_server]: listen failed\n");
         closesocket(s);
+        stop_server();
         return 0;
     }
 
@@ -57,9 +86,11 @@ int start_server(const char* host, unsigned short port) {
 
     g_ctx.rsp.client = accept(s, NULL, NULL);
     closesocket(s);
+    reset_recv_buffer();
 
     if (g_ctx.rsp.client == INVALID_SOCKET) {
         fprintf(stderr, "accept failed\n");
+        stop_server();
         return 0;
     }
 
@@ -72,10 +103,6 @@ int start_server(const char* host, unsigned short port) {
 
     return 1;
 }
-
-static char s_recv_buf[4096];
-static int s_recv_len = 0;
-static int s_recv_pos = 0;
 
 int recv_char(void) {
     if (s_recv_pos >= s_recv_len) {

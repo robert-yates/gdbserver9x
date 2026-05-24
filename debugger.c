@@ -22,6 +22,52 @@ DWORD get_first_section_rva_from_file(const char* path);
 void populate_module_sections_from_pe(struct modules* m);
 static void invalidate_thread_caches(void);
 
+void cleanup_debuggee(int terminate) {
+    int i;
+
+    if (terminate && g_ctx.dbg.process_handle) {
+        TerminateProcess(g_ctx.dbg.process_handle, 0);
+    }
+
+    if (g_ctx.dbg.have_pending_event) {
+        ContinueDebugEvent(g_ctx.dbg.last_event.dwProcessId, g_ctx.dbg.last_event.dwThreadId, DBG_CONTINUE);
+        g_ctx.dbg.have_pending_event = 0;
+    }
+
+    if (terminate && g_ctx.dbg.process_handle) {
+        
+        // drain the queue whilst waiting for TerminateProcess's signal
+        DEBUG_EVENT ev;
+        DWORD start = GetTickCount();
+        for (;;) {
+            DWORD elapsed = GetTickCount() - start;
+            DWORD timeout = elapsed >= 2000 ? 0 : 2000 - elapsed;
+            if (!WaitForDebugEvent(&ev, timeout))
+                break;
+            if (ev.dwDebugEventCode == LOAD_DLL_DEBUG_EVENT)
+                CloseHandle(ev.u.LoadDll.hFile);
+            ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE);
+            if (ev.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT)
+                break;
+        }
+    }
+
+    for (i = 0; i < g_ctx.dbg.thread_count; ++i) {
+        if (g_ctx.dbg.threads[i].hThread) {
+            CloseHandle(g_ctx.dbg.threads[i].hThread);
+            g_ctx.dbg.threads[i].hThread = NULL;
+        }
+    }
+    g_ctx.dbg.thread_count = 0;
+
+    if (g_ctx.dbg.process_handle) {
+        CloseHandle(g_ctx.dbg.process_handle);
+        g_ctx.dbg.process_handle = NULL;
+    }
+
+    invalidate_thread_caches();
+}
+
 int launch_debuggee(const char* cmdline) {
 
     STARTUPINFO si;
@@ -405,8 +451,11 @@ void read_one_register(const char* pkt, char* out, int outsz) {
 }
 
 void add_thread(DWORD tid, HANDLE hThread) {
-    if (g_ctx.dbg.thread_count >= MAX_THREADS)
+    if (g_ctx.dbg.thread_count >= MAX_THREADS) {
+        if (hThread)
+            CloseHandle(hThread);
         return;
+    }
 
     g_ctx.dbg.threads[g_ctx.dbg.thread_count].tid = tid;
     g_ctx.dbg.threads[g_ctx.dbg.thread_count].hThread = hThread;
@@ -422,6 +471,9 @@ void remove_thread(DWORD tid) {
     for (i = 0; i < g_ctx.dbg.thread_count; ++i) {
         if (g_ctx.dbg.threads[i].tid != tid)
             continue;
+
+        if (g_ctx.dbg.threads[i].hThread)
+            CloseHandle(g_ctx.dbg.threads[i].hThread);
 
         if (i != g_ctx.dbg.thread_count - 1)
             g_ctx.dbg.threads[i] = g_ctx.dbg.threads[g_ctx.dbg.thread_count - 1];

@@ -13,7 +13,7 @@ static void print_usage(const char* prog) {
     fprintf(stderr, "Usage: %s HOST:PORT PROGRAM [ARGS...]\n", prog);
 }
 
-int main(int argc, char** argv) {
+int core(int argc, char** argv) {
     char host[64];
     unsigned short port;
     const char* host_port;
@@ -22,16 +22,14 @@ int main(int argc, char** argv) {
     char cmdline[1024];
     int i;
     size_t used;
-
-    fprintf(stdout, "gdbserver9x - version 1.0.24052026\n");
-
-    do_logging = (getenv("GDBLOG") != NULL);
+    int rc = 1;
+    int debuggee_started = 0;
 
     context_init();
 
     if (argc < 3) {
         print_usage(argv[0]);
-        return 1;
+        goto done;
     }
 
     host_port = argv[1];
@@ -39,13 +37,13 @@ int main(int argc, char** argv) {
     if (!colon || colon == host_port) {
         fprintf(stderr, "Bad HOST:PORT argument: '%s'\n", host_port);
         print_usage(argv[0]);
-        return 1;
+        goto done;
     }
 
     host_len = (size_t)(colon - host_port);
     if (host_len >= sizeof(host)) {
         fprintf(stderr, "Host name too long\n");
-        return 1;
+        goto done;
     }
     memcpy(host, host_port, host_len);
     host[host_len] = '\0';
@@ -54,7 +52,7 @@ int main(int argc, char** argv) {
         int p = atoi(colon + 1);
         if (p <= 0 || p > 65535) {
             fprintf(stderr, "Bad port: '%s'\n", colon + 1);
-            return 1;
+            goto done;
         }
         port = (unsigned short)p;
     }
@@ -69,7 +67,7 @@ int main(int argc, char** argv) {
 
         if (used + need >= sizeof(cmdline)) {
             fprintf(stderr, "Command line too long\n");
-            return 1;
+            goto done;
         }
 
         if (i > 2)
@@ -85,11 +83,12 @@ int main(int argc, char** argv) {
 
     if (!start_server(host, port)) {
         fprintf(stderr, "Failed to start server.\n");
-        return 1;
+        goto done;
     }
 
     if (!launch_debuggee(cmdline))
-        return 1;
+        goto done;
+    debuggee_started = 1;
 
     while (recv_packet(g_ctx.rsp.pkt, sizeof(g_ctx.rsp.pkt))) {
 
@@ -110,13 +109,35 @@ int main(int argc, char** argv) {
 
         printf("RSP: %s\n", g_ctx.rsp.reply);
 
-        send_packet(g_ctx.rsp.reply);
-
         if (g_ctx.rsp.pkt[0] == 'k')
             break;
+
+        send_packet(g_ctx.rsp.reply);
     }
 
     fprintf(stdout, "GDB Server exiting.\n");
-    TerminateProcess(g_ctx.dbg.process_handle, 0);
-    return 0;
+    rc = 0;
+
+done:
+    if (debuggee_started || g_ctx.dbg.process_handle)
+        cleanup_debuggee(1);
+    stop_server();
+    return rc;
+}
+
+int main(int argc, char** argv) {
+
+    fprintf(stdout, "gdbserver9x - version 1.1.24052026\n");
+
+    do_logging = (getenv("GDBLOG") != NULL);
+    do_restart = (getenv("GDBRESTART") != NULL);
+
+    for (;;) {
+        int rc = core(argc, argv);
+
+        if (rc != 0 || !do_restart)
+            return rc;
+
+        fprintf(stdout, "Restarting gdbserver.\n");
+    }
 }
