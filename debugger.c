@@ -659,6 +659,70 @@ void read_memory_packet(const char* pkt, char* out, int outsz) {
     *p = '\0';
 }
 
+void write_memory_packet(const char* pkt, char* out, int outsz) {
+    DWORD addr;
+    DWORD len;
+    const char* comma;
+    const char* colon;
+    const char* hex;
+    BYTE buf[1024];
+    SIZE_T written = 0;
+    DWORD i;
+
+    (void)outsz;
+
+    comma = strchr(pkt, ',');
+    if (!comma) {
+        strcpy(out, "E22");
+        return;
+    }
+
+    colon = strchr(comma + 1, ':');
+    if (!colon) {
+        strcpy(out, "E22");
+        return;
+    }
+
+    addr = strtoul(pkt + 1, NULL, 16);
+    len = strtoul(comma + 1, NULL, 16);
+
+    if (len == 0) {
+        strcpy(out, "OK");
+        return;
+    }
+
+    if (len > sizeof(buf)) {
+        strcpy(out, "E22");
+        return;
+    }
+
+    hex = colon + 1;
+    for (i = 0; i < len; ++i) {
+        int hi, lo;
+        if (!hex[0] || !hex[1]) {
+            strcpy(out, "E22");
+            return;
+        }
+        hi = hexval((unsigned char)hex[0]);
+        lo = hexval((unsigned char)hex[1]);
+        if (hi < 0 || lo < 0) {
+            strcpy(out, "E22");
+            return;
+        }
+        buf[i] = (BYTE)((hi << 4) | lo);
+        hex += 2;
+    }
+
+    if (!WriteProcessMemory(g_ctx.dbg.process_handle, (LPVOID)addr, buf, len, &written) || written != len) {
+        strcpy(out, "E14");
+        return;
+    }
+
+    maybe_flush_icache((LPCVOID)addr, len);
+
+    strcpy(out, "OK");
+}
+
 int read_debuggee_byte(DWORD addr, BYTE* out) {
     SIZE_T got = 0;
 

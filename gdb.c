@@ -458,6 +458,10 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
         read_memory_packet(pkt, reply, replysz);
         RETURN_HANDLE_PACKET(PACKET_HANDLED);
     }
+    if (pkt[0] == 'M') {
+        write_memory_packet(pkt, reply, replysz);
+        RETURN_HANDLE_PACKET(PACKET_HANDLED);
+    }
     // ---------------------------------------------------------------------------------
     // IDA's ctrl+f2
     if (pkt[0] == 'k') {
