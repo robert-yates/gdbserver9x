@@ -347,6 +347,10 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
         read_one_register(pkt, reply, replysz);
         RETURN_HANDLE_PACKET(PACKET_HANDLED);
     }
+    if (pkt[0] == 'P') {
+        write_one_register(pkt, reply, replysz);
+        RETURN_HANDLE_PACKET(PACKET_HANDLED);
+    }
     if (strcmp(pkt, "g") == 0) {
         read_all_registers(reply, replysz);
         return PACKET_HANDLED;

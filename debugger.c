@@ -8,6 +8,7 @@ void add_thread(DWORD tid, HANDLE hThread);
 void remove_thread(DWORD tid);
 DWORD exception_to_signal(DWORD code);
 DWORD reg_by_index(CONTEXT* c, int n, int* ok);
+int write_reg_by_index(CONTEXT* c, int n, DWORD v);
 int find_bp_by_addr(DWORD addr);
 int alloc_bp_slot();
 int write_debuggee_byte(DWORD addr, BYTE value);
@@ -450,6 +451,59 @@ void read_one_register(const char* pkt, char* out, int outsz) {
     *p = 0;
 }
 
+void write_one_register(const char* pkt, char* out, int outsz) {
+    CONTEXT c;
+    int n;
+    DWORD v = 0;
+    const char* eq;
+    const char* p;
+    int i;
+
+    (void)outsz;
+
+    eq = strchr(pkt, '=');
+    if (!eq) {
+        strcpy(out, "E01");
+        return;
+    }
+
+    n = (int)strtoul(pkt + 1, NULL, 16);
+
+    p = eq + 1;
+    for (i = 0; i < 4; ++i) {
+        int hi, lo;
+        if (!p[0] || !p[1]) {
+            strcpy(out, "E01");
+            return;
+        }
+        hi = hexval((unsigned char)p[0]);
+        lo = hexval((unsigned char)p[1]);
+        if (hi < 0 || lo < 0) {
+            strcpy(out, "E01");
+            return;
+        }
+        v |= ((DWORD)((hi << 4) | lo)) << (i * 8);
+        p += 2;
+    }
+
+    if (!get_context_for_current(&c)) {
+        strcpy(out, "E01");
+        return;
+    }
+
+    if (!write_reg_by_index(&c, n, v)) {
+        strcpy(out, "E01");
+        return;
+    }
+
+    if (!set_context_for_current(&c)) {
+        strcpy(out, "E01");
+        return;
+    }
+
+    strcpy(out, "OK");
+}
+
 void add_thread(DWORD tid, HANDLE hThread) {
     if (g_ctx.dbg.thread_count >= MAX_THREADS) {
         if (hThread)
@@ -691,6 +745,28 @@ DWORD reg_by_index(CONTEXT* c, int n, int* ok) {
         default:
             *ok = 0;
             return 0;
+    }
+}
+
+int write_reg_by_index(CONTEXT* c, int n, DWORD v) {
+    switch (n) {
+        case 0:  c->Eax    = v; return 1;
+        case 1:  c->Ebx    = v; return 1;
+        case 2:  c->Ecx    = v; return 1;
+        case 3:  c->Edx    = v; return 1;
+        case 4:  c->Edi    = v; return 1;
+        case 5:  c->Esi    = v; return 1;
+        case 6:  c->Ebp    = v; return 1;
+        case 7:  c->Esp    = v; return 1;
+        case 8:  c->Eip    = v; return 1;
+        case 9:  c->EFlags = v; return 1;
+        case 10: c->SegCs  = v; return 1;
+        case 11: c->SegFs  = v; return 1;
+        case 12: c->SegGs  = v; return 1;
+        case 13: c->SegSs  = v; return 1;
+        case 14: c->SegDs  = v; return 1;
+        case 15: c->SegEs  = v; return 1;
+        default: return 0;
     }
 }
 
