@@ -73,10 +73,10 @@ will restart the server on exit
 
 ## Histoy
 
-v1.0 - inital release not battle tested
-v1.1 - allows round trip debugging via `GDBRESTART` var
-     - allows register writes
-     - allows memory writes
+v1.0 - inital release not battle tested  
+v1.1 - allows round trip debugging via `GDBRESTART` var  
+     - allows register writes  
+     - allows memory writes  
 
 have fun  
 /yates.
