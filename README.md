@@ -68,15 +68,16 @@ will restart the server on exit
 - The server launches a new process; it does not attach to an existing process.
 - While the debuggee is running, the main loop waits for the next Windows debug
   event and does not process arbitrary incoming RSP packets.
-- Hardware breakpoints, watchpoints, and general memory writes are not currently
-  implemented.
+- Hardware breakpoints and watchpoints, are not currently implemented.
 
-## Histoy
+## History
 
-v1.0 - inital release not battle tested  
-v1.1 - allows round trip debugging via `GDBRESTART` var  
-     - allows register writes  
-     - allows memory writes  
-
+v1.0  
+  - inital release not battle tested  
+v1.1  
+  - allows round trip debugging via `GDBRESTART` var  
+  - allows register writes  
+  - allows memory writes  
+  
 have fun  
 /yates.
