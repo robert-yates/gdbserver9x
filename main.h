@@ -29,6 +29,8 @@ void build_proc_maps(void);
 int handle_qxfer_exec_file(const char* pkt, char* reply, int replysz);
 HANDLE find_thread(DWORD tid);
 int refresh_modules_from_toolhelp(void);
+int refresh_modules_from_peb(void);
+int refresh_modules(void);
 void make_posix_win_path(const char* win_path, char* out, int outsz);
 void build_libraries_xml(void);
 const char* find_module_path_for_addr(DWORD addr);

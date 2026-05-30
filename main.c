@@ -127,7 +127,7 @@ done:
 
 int main(int argc, char** argv) {
 
-    fprintf(stdout, "gdbserver9x - version 1.1.24052026\n");
+    fprintf(stdout, "gdbserver9x - version 1.2.30052026\n");
 
     do_logging = (getenv("GDBLOG") != NULL);
     do_restart = (getenv("GDBRESTART") != NULL);

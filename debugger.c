@@ -36,7 +36,7 @@ void cleanup_debuggee(int terminate) {
     }
 
     if (terminate && g_ctx.dbg.process_handle) {
-        
+
         // drain the queue whilst waiting for TerminateProcess's signal
         DEBUG_EVENT ev;
         DWORD start = GetTickCount();
@@ -814,23 +814,56 @@ DWORD reg_by_index(CONTEXT* c, int n, int* ok) {
 
 int write_reg_by_index(CONTEXT* c, int n, DWORD v) {
     switch (n) {
-        case 0:  c->Eax    = v; return 1;
-        case 1:  c->Ebx    = v; return 1;
-        case 2:  c->Ecx    = v; return 1;
-        case 3:  c->Edx    = v; return 1;
-        case 4:  c->Edi    = v; return 1;
-        case 5:  c->Esi    = v; return 1;
-        case 6:  c->Ebp    = v; return 1;
-        case 7:  c->Esp    = v; return 1;
-        case 8:  c->Eip    = v; return 1;
-        case 9:  c->EFlags = v; return 1;
-        case 10: c->SegCs  = v; return 1;
-        case 11: c->SegFs  = v; return 1;
-        case 12: c->SegGs  = v; return 1;
-        case 13: c->SegSs  = v; return 1;
-        case 14: c->SegDs  = v; return 1;
-        case 15: c->SegEs  = v; return 1;
-        default: return 0;
+        case 0:
+            c->Eax = v;
+            return 1;
+        case 1:
+            c->Ebx = v;
+            return 1;
+        case 2:
+            c->Ecx = v;
+            return 1;
+        case 3:
+            c->Edx = v;
+            return 1;
+        case 4:
+            c->Edi = v;
+            return 1;
+        case 5:
+            c->Esi = v;
+            return 1;
+        case 6:
+            c->Ebp = v;
+            return 1;
+        case 7:
+            c->Esp = v;
+            return 1;
+        case 8:
+            c->Eip = v;
+            return 1;
+        case 9:
+            c->EFlags = v;
+            return 1;
+        case 10:
+            c->SegCs = v;
+            return 1;
+        case 11:
+            c->SegFs = v;
+            return 1;
+        case 12:
+            c->SegGs = v;
+            return 1;
+        case 13:
+            c->SegSs = v;
+            return 1;
+        case 14:
+            c->SegDs = v;
+            return 1;
+        case 15:
+            c->SegEs = v;
+            return 1;
+        default:
+            return 0;
     }
 }
 
@@ -1025,13 +1058,15 @@ void make_bn_maps_path(const char* win_path, char* out, int outsz) {
 }
 
 int refresh_modules_from_toolhelp(void);
+int refresh_modules_from_peb(void);
+int refresh_modules(void);
 void build_proc_maps(void) {
     int i;
     char* p = g_ctx.mod.maps_buf;
     char* end = g_ctx.mod.maps_buf + sizeof(g_ctx.mod.maps_buf);
 
     if (g_ctx.mod.modules_changed) {
-        refresh_modules_from_toolhelp();
+        refresh_modules();
         g_ctx.mod.modules_changed = 0;
     }
 
@@ -1089,6 +1124,153 @@ int refresh_modules_from_toolhelp(void) {
 
     CloseHandle(snap);
     return 1;
+}
+
+typedef LONG(WINAPI* PFN_NtQueryInformationProcess)(HANDLE ProcessHandle, ULONG ProcessInformationClass, PVOID ProcessInformation,
+                                                    ULONG ProcessInformationLength, ULONG* ReturnLength);
+
+typedef struct _PROCESS_BASIC_INFO_32 {
+    LONG ExitStatus;
+    PVOID PebBaseAddress;
+    DWORD AffinityMask;
+    LONG BasePriority;
+    DWORD UniqueProcessId;
+    DWORD InheritedFromUniqueProcessId;
+} PROCESS_BASIC_INFO_32;
+
+#define ProcessBasicInformationClass 0
+
+#define PEB_OFF_LDR 0x0C
+#define LDR_OFF_INLOADORDER 0x0C
+#define LDRE_OFF_DLLBASE 0x18
+#define LDRE_OFF_SIZEOFIMAGE 0x20
+#define LDRE_OFF_FULLNAME_LEN 0x24
+#define LDRE_OFF_FULLNAME_BUF 0x28
+
+static int read_remote(DWORD addr, void* buf, DWORD size) {
+    SIZE_T got = 0;
+
+    if (!ReadProcessMemory(g_ctx.dbg.process_handle, (LPCVOID)addr, buf, size, &got))
+        return 0;
+
+    return got == size;
+}
+
+int refresh_modules_from_peb(void) {
+    static PFN_NtQueryInformationProcess pNtQIP = NULL;
+    static int resolved = 0;
+    PROCESS_BASIC_INFO_32 pbi;
+    DWORD peb;
+    DWORD ldr;
+    DWORD head;
+    DWORD flink;
+    DWORD entry;
+    int guard;
+    LONG status;
+
+    g_ctx.mod.mod_count = 0;
+
+    if (!resolved) {
+        HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+
+        if (!ntdll)
+            ntdll = LoadLibraryA("ntdll.dll");
+
+        if (ntdll)
+            pNtQIP = (PFN_NtQueryInformationProcess)GetProcAddress(ntdll, "NtQueryInformationProcess");
+
+        resolved = 1;
+    }
+
+    if (!pNtQIP) {
+        fprintf(stderr, "[modules]: NtQueryInformationProcess unavailable\n");
+        return 0;
+    }
+
+    memset(&pbi, 0, sizeof(pbi));
+    status = pNtQIP(g_ctx.dbg.process_handle, ProcessBasicInformationClass, &pbi, sizeof(pbi), NULL);
+    if (status < 0 || pbi.PebBaseAddress == NULL) {
+        printf("[modules]: NtQueryInformationProcess failed status=0x%08lx\n", (DWORD)status);
+        return 0;
+    }
+
+    peb = (DWORD)pbi.PebBaseAddress;
+
+    if (!read_remote(peb + PEB_OFF_LDR, &ldr, sizeof(ldr)) || ldr == 0) {
+        printf("[modules]: failed to read PEB.Ldr\n");
+        return 0;
+    }
+
+    head = ldr + LDR_OFF_INLOADORDER;
+    if (!read_remote(head, &flink, sizeof(flink))) {
+        printf("[modules]: failed to read module list head\n");
+        return 0;
+    }
+
+    guard = 0;
+    while (flink != head && guard < MAX_MODULES * 2) {
+        DWORD dllbase = 0;
+        DWORD imgsize = 0;
+        USHORT namelen = 0;
+        DWORD namebuf = 0;
+        WCHAR wpath[MAX_MODULE_PATH];
+        char apath[MAX_MODULE_PATH];
+        DWORD toread;
+
+        ++guard;
+        entry = flink;
+
+        if (!read_remote(entry + 0x00, &flink, sizeof(flink)))
+            break;
+
+        read_remote(entry + LDRE_OFF_DLLBASE, &dllbase, sizeof(dllbase));
+        read_remote(entry + LDRE_OFF_SIZEOFIMAGE, &imgsize, sizeof(imgsize));
+        read_remote(entry + LDRE_OFF_FULLNAME_LEN, &namelen, sizeof(namelen));
+        read_remote(entry + LDRE_OFF_FULLNAME_BUF, &namebuf, sizeof(namebuf));
+
+        if (dllbase == 0)
+            continue;
+
+        apath[0] = '\0';
+
+        toread = namelen;
+        if (toread > sizeof(wpath) - sizeof(WCHAR))
+            toread = sizeof(wpath) - sizeof(WCHAR);
+
+        if (namebuf && toread && read_remote(namebuf, wpath, toread)) {
+            int wchars = (int)(toread / sizeof(WCHAR));
+            int k;
+
+            if (wchars > (int)sizeof(apath) - 1)
+                wchars = (int)sizeof(apath) - 1;
+
+            for (k = 0; k < wchars; ++k) {
+                WCHAR wc = wpath[k];
+                apath[k] = (wc != 0 && wc < 0x100) ? (char)wc : '?';
+            }
+            apath[wchars] = '\0';
+        }
+
+        printf("[modules]: peb module base=0x%08lx size=0x%08lx path=%s\n", dllbase, imgsize, apath);
+        add_or_update_module(dllbase, imgsize, apath);
+    }
+
+    printf("[modules]: PEB walk complete count=%d\n", g_ctx.mod.mod_count);
+    fflush(stdout);
+    return 1;
+}
+
+int refresh_modules(void) {
+    static int is_nt = -1;
+
+    if (is_nt < 0) {
+        is_nt = (GetVersion() & 0x80000000UL) == 0;
+    }
+
+    if (is_nt)
+        return refresh_modules_from_peb();
+
+    return refresh_modules_from_toolhelp();
 }
 
 int handle_qxfer_exec_file(const char* pkt, char* reply, int replysz) {
@@ -1189,7 +1371,7 @@ void build_libraries_xml(void) {
     char* p = g_ctx.mod.libraries_xml;
     char* end = g_ctx.mod.libraries_xml + sizeof(g_ctx.mod.libraries_xml);
 
-    refresh_modules_from_toolhelp();
+    refresh_modules();
 
     p += sprintf(p, "<library-list>");
 
@@ -1227,7 +1409,7 @@ void build_libraries_xml(void) {
 const char* find_module_path_for_addr(DWORD addr) {
     int i;
 
-    refresh_modules_from_toolhelp();
+    refresh_modules();
 
     for (i = 0; i < g_ctx.mod.mod_count; ++i) {
         DWORD start = g_ctx.mod.mods[i].base;

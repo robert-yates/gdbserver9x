@@ -571,7 +571,7 @@ int handle_qFileLoadAddress(const char* pkt, char* reply, int replysz) {
 
     printf("[qFileLoadAddress]: '%s'\n", requested);
 
-    refresh_modules_from_toolhelp();
+    refresh_modules();
 
     for (i = 0; i < g_ctx.mod.mod_count; ++i) {
         char posix_path[512];
