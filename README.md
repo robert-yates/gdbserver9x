@@ -2,21 +2,7 @@
 
 # Info
 
-`gdbserver9x` is a very hacked together gdbserver implementation for debugging 32bits exes on old windows machines. It works best with [BinaryNinja's](https://binary.ninja/) `GDP RSP` adapter. Tested on Windows 98SE and Windows XP-SP3
-## Status
-
-It implements the basics needed for practical 32-bit process debugging on old Windows machines, with a focus on keeping the code simple enough to build with the Visual C++ 6.0 toolchain.
-
-Implemented support includes:
-
-- Launching a target process under the Windows debugging API.
-- GDB RSP packet framing, checksums, and no-ack mode.
-- Basic process, host, thread, and register queries.
-- Memory reads and memory region queries.
-- Continue and single-step requests.
-- Software breakpoints via `Z0` and `z0`.
-- Thread listing and thread selection.
-- Module/library metadata used by Binary Ninja and LLDB-style adapters.
+`gdbserver9x` is a very hacked together gdbserver implementation for debugging 32bits exes on old windows machines. It works best with [BinaryNinja's](https://binary.ninja/) `GDP RSP` adapter. Tested on Windows 98SE, Windows 2000-SP4 and Windows XP-SP3
 
 ## Building
 
@@ -74,10 +60,14 @@ will restart the server on exit
 
 v1.0  
   - inital release not battle tested  
+
 v1.1  
   - allows round trip debugging via `GDBRESTART` var  
   - allows register writes  
   - allows memory writes  
+  
+v1.2  
+  - fix deadlock when reading module list on windows 2000  
   
 have fun  
 /yates.
