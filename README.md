@@ -69,5 +69,8 @@ v1.1
 v1.2  
   - fix deadlock when reading module list on windows 2000  
   
+v1.3  
+  - qGetTIBAddr,vFile and qXfer:libraries:read+ support for IDA 9.4  
+  
 have fun  
 /yates.
