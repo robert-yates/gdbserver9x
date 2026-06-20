@@ -28,6 +28,7 @@ int step_once_for_frontend(char* reply, int replysz);
 void build_proc_maps(void);
 int handle_qxfer_exec_file(const char* pkt, char* reply, int replysz);
 HANDLE find_thread(DWORD tid);
+int get_tib_address(DWORD tid, DWORD* out);
 int refresh_modules_from_toolhelp(void);
 int refresh_modules_from_peb(void);
 int refresh_modules(void);

@@ -13,6 +13,7 @@ int parse_B_packet(const char* pkt, DWORD* addr, char* mode);
 int handle_qFileLoadAddress(const char* pkt, char* reply, int replysz);
 int handle_qxfer_libraries(const char* pkt, char* reply, int replysz);
 int handle_qMemoryRegionInfo(const char* pkt, char* reply, int replysz);
+int handle_qGetTIBAddr(const char* pkt, char* reply, int replysz);
 int do_continue_common(char* reply, int replysz);
 int parse_thread_id_token(const char* in, const char** end_out, DWORD* tid_out);
 int parse_vcont_resume_action(const char* pkt, DWORD fallback_tid, char* action_out, DWORD* action_tid_out);
@@ -454,6 +455,10 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
         RETURN_HANDLE_PACKET(handle_qMemoryRegionInfo(pkt, reply, replysz));
     }
     // ---------------------------------------------------------------------------------
+    if (strncmp(pkt, "qGetTIBAddr:", 12) == 0) {
+        RETURN_HANDLE_PACKET(handle_qGetTIBAddr(pkt, reply, replysz));
+    }
+    // ---------------------------------------------------------------------------------
     if (pkt[0] == 'm') {
         read_memory_packet(pkt, reply, replysz);
         RETURN_HANDLE_PACKET(PACKET_HANDLED);
@@ -516,6 +521,24 @@ int do_continue_common(char* reply, int replysz) {
     }
 
     make_stop_reply(reply, replysz);
+    return 1;
+}
+
+int handle_qGetTIBAddr(const char* pkt, char* reply, int replysz) {
+    DWORD tid;
+    DWORD tib = 0;
+
+    if (strncmp(pkt, "qGetTIBAddr:", 12) != 0)
+        return 0;
+
+    tid = strtoul(pkt + 12, NULL, 16);
+
+    if (!get_tib_address(tid, &tib)) {
+        strcpy(reply, "E01");
+        return 1;
+    }
+
+    sprintf(reply, "%lx", tib);
     return 1;
 }
 
@@ -785,7 +808,7 @@ int is_proc_maps_path(const char* path) {
 
 int handle_vfile_packet(const char* pkt, char* reply, int replysz) {
 
-    if (strcmp(pkt, "vFile:setfs:0") == 0) {
+    if (strncmp(pkt, "vFile:setfs:", 12) == 0) {
         strcpy(reply, "F0");
         return 1;
     }
@@ -793,9 +816,12 @@ int handle_vfile_packet(const char* pkt, char* reply, int replysz) {
     if (strncmp(pkt, "vFile:open:", 11) == 0) {
         char filename[512];
         const char* after;
+        HANDLE h;
+        int slot;
+        int i;
 
         if (!decode_hex_string_until_comma(pkt + 11, filename, sizeof(filename), &after)) {
-            strcpy(reply, "F-1,16"); /* EINVAL-ish */
+            strcpy(reply, "F-1,16");
             return 1;
         }
 
@@ -808,7 +834,65 @@ int handle_vfile_packet(const char* pkt, char* reply, int replysz) {
             return 1;
         }
 
-        strcpy(reply, "F-1,2"); /* ENOENT */
+        slot = -1;
+        for (i = 0; i < MAX_VFILES; ++i) {
+            if (!g_ctx.mod.vfiles[i].in_use) {
+                slot = i;
+                break;
+            }
+        }
+
+        if (slot < 0) {
+            strcpy(reply, "F-1,18");
+            return 1;
+        }
+
+        h = CreateFile(filename, GENERIC_READ, FILE_SHARE_READ | FILE_SHARE_WRITE, NULL, OPEN_EXISTING,
+                       FILE_ATTRIBUTE_NORMAL, NULL);
+
+        if (h == INVALID_HANDLE_VALUE) {
+            printf("[vFile]: CreateFile('%s') failed: %lu\n", filename, GetLastError());
+            strcpy(reply, "F-1,2");
+            return 1;
+        }
+
+        g_ctx.mod.vfiles[slot].in_use = 1;
+        g_ctx.mod.vfiles[slot].handle = h;
+
+        sprintf(reply, "F%x", VFILE_FD_BASE + slot);
+        return 1;
+    }
+
+    if (strncmp(pkt, "vFile:fstat:", 12) == 0) {
+        unsigned long fd = strtoul(pkt + 12, NULL, 16);
+        int slot = (int)fd - VFILE_FD_BASE;
+        DWORD fsize;
+        unsigned char st[64];
+        char* out;
+
+        if (slot < 0 || slot >= MAX_VFILES || !g_ctx.mod.vfiles[slot].in_use) {
+            strcpy(reply, "F-1,9");
+            return 1;
+        }
+
+        fsize = GetFileSize(g_ctx.mod.vfiles[slot].handle, NULL);
+        if (fsize == (DWORD)0xFFFFFFFF && GetLastError() != NO_ERROR) {
+            strcpy(reply, "F-1,5");
+            return 1;
+        }
+
+        memset(st, 0, sizeof(st));
+        st[10] = 0x81;
+        st[11] = 0xA4;
+        st[15] = 1;
+        st[32] = (unsigned char)(fsize >> 24);
+        st[33] = (unsigned char)(fsize >> 16);
+        st[34] = (unsigned char)(fsize >> 8);
+        st[35] = (unsigned char)(fsize);
+
+        out = reply;
+        out += sprintf(out, "F%x;", (unsigned)sizeof(st));
+        append_escaped_binary(out, reply + replysz - 1, st, (int)sizeof(st));
         return 1;
     }
 
@@ -838,39 +922,88 @@ int handle_vfile_packet(const char* pkt, char* reply, int replysz) {
 
         printf("[vFile]: pread fd=%lu count=%lu offset=%lu\n", fd, count, offset);
 
-        if (fd != FAKE_MAPS_FD || !g_ctx.mod.maps_fd_open) {
-            strcpy(reply, "F-1,9"); /* EBADF */
+        if (fd == FAKE_MAPS_FD) {
+            if (!g_ctx.mod.maps_fd_open) {
+                strcpy(reply, "F-1,9"); /* EBADF */
+                return 1;
+            }
+
+            if (offset >= (unsigned long)g_ctx.mod.maps_len) {
+                strcpy(reply, "F0;");
+                return 1;
+            }
+
+            n = g_ctx.mod.maps_len - (int)offset;
+
+            if ((unsigned long)n > count)
+                n = (int)count;
+
+            if (n > 1024)
+                n = 1024;
+
+            out = reply;
+            out += sprintf(out, "F%x;", n);
+
+            append_escaped_binary(out, reply + replysz - 1, (const unsigned char*)(g_ctx.mod.maps_buf + offset), n);
+
             return 1;
         }
 
-        if (offset >= (unsigned long)g_ctx.mod.maps_len) {
-            strcpy(reply, "F0;");
-            return 1;
-        }
+        /* Real file on the host filesystem. */
+        {
+            int slot = (int)fd - VFILE_FD_BASE;
+            HANDLE h;
+            DWORD pos;
+            DWORD got = 0;
+            unsigned char buf[1024];
 
-        n = g_ctx.mod.maps_len - (int)offset;
+            if (slot < 0 || slot >= MAX_VFILES || !g_ctx.mod.vfiles[slot].in_use) {
+                strcpy(reply, "F-1,9"); /* EBADF */
+                return 1;
+            }
 
-        if ((unsigned long)n > count)
+            h = g_ctx.mod.vfiles[slot].handle;
+
+            pos = SetFilePointer(h, (LONG)offset, NULL, FILE_BEGIN);
+            if (pos == (DWORD)0xFFFFFFFF && GetLastError() != NO_ERROR) {
+                strcpy(reply, "F-1,5"); /* EIO */
+                return 1;
+            }
+
+            /* Cap so the escaped payload always fits the reply buffer. */
             n = (int)count;
+            if (n > (int)sizeof(buf))
+                n = (int)sizeof(buf);
 
-        if (n > 1024)
-            n = 1024;
+            if (!ReadFile(h, buf, (DWORD)n, &got, NULL)) {
+                strcpy(reply, "F-1,5"); /* EIO */
+                return 1;
+            }
 
-        out = reply;
-        out += sprintf(out, "F%x;", n);
-
-        append_escaped_binary(out, reply + replysz - 1, (const unsigned char*)(g_ctx.mod.maps_buf + offset), n);
-
-        return 1;
+            out = reply;
+            out += sprintf(out, "F%lx;", (unsigned long)got);
+            append_escaped_binary(out, reply + replysz - 1, buf, (int)got);
+            return 1;
+        }
     }
 
     if (strncmp(pkt, "vFile:close:", 12) == 0) {
         unsigned long fd = strtoul(pkt + 12, NULL, 16);
+        int slot;
 
         printf("[vFile]: close fd=%lu\n", fd);
 
         if (fd == FAKE_MAPS_FD) {
             g_ctx.mod.maps_fd_open = 0;
+            strcpy(reply, "F0");
+            return 1;
+        }
+
+        slot = (int)fd - VFILE_FD_BASE;
+        if (slot >= 0 && slot < MAX_VFILES && g_ctx.mod.vfiles[slot].in_use) {
+            CloseHandle(g_ctx.mod.vfiles[slot].handle);
+            g_ctx.mod.vfiles[slot].in_use = 0;
+            g_ctx.mod.vfiles[slot].handle = NULL;
             strcpy(reply, "F0");
             return 1;
         }

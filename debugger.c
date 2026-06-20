@@ -66,6 +66,14 @@ void cleanup_debuggee(int terminate) {
         g_ctx.dbg.process_handle = NULL;
     }
 
+    for (i = 0; i < MAX_VFILES; ++i) {
+        if (g_ctx.mod.vfiles[i].in_use) {
+            CloseHandle(g_ctx.mod.vfiles[i].handle);
+            g_ctx.mod.vfiles[i].in_use = 0;
+            g_ctx.mod.vfiles[i].handle = NULL;
+        }
+    }
+
     invalidate_thread_caches();
 }
 
@@ -398,6 +406,74 @@ int set_context_for_current(CONTEXT* ctx) {
     g_ctx.dbg.cached_g_reply_valid = 0;
 
     return 1;
+}
+
+typedef LONG(WINAPI* PFN_NtQueryInformationThread)(HANDLE ThreadHandle, ULONG ThreadInformationClass, PVOID ThreadInformation,
+                                                   ULONG ThreadInformationLength, ULONG* ReturnLength);
+
+#define ThreadBasicInformationClass 0
+
+typedef struct _THREAD_BASIC_INFO_32 {
+    LONG ExitStatus;
+    DWORD TebBaseAddress;
+    DWORD UniqueProcessId;
+    DWORD UniqueThreadId;
+    DWORD AffinityMask;
+    LONG Priority;
+    LONG BasePriority;
+} THREAD_BASIC_INFO_32;
+
+int get_tib_address(DWORD tid, DWORD* out) {
+    static PFN_NtQueryInformationThread pNtQIT = NULL;
+    static int resolved = 0;
+    HANDLE ht;
+
+    ht = find_thread(tid);
+    if (!ht)
+        return 0;
+
+    if (!resolved) {
+        HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+
+        if (!ntdll)
+            ntdll = LoadLibraryA("ntdll.dll");
+
+        if (ntdll)
+            pNtQIT = (PFN_NtQueryInformationThread)GetProcAddress(ntdll, "NtQueryInformationThread");
+
+        resolved = 1;
+    }
+
+    if (pNtQIT) {
+        THREAD_BASIC_INFO_32 tbi;
+        LONG status;
+
+        memset(&tbi, 0, sizeof(tbi));
+        status = pNtQIT(ht, ThreadBasicInformationClass, &tbi, sizeof(tbi), NULL);
+
+        if (status >= 0 && tbi.TebBaseAddress != 0) {
+            *out = tbi.TebBaseAddress;
+            return 1;
+        }
+    }
+
+    // 9x
+    {
+        CONTEXT c;
+        LDT_ENTRY ldt;
+
+        memset(&c, 0, sizeof(c));
+        c.ContextFlags = CONTEXT_SEGMENTS;
+
+        if (!GetThreadContext(ht, &c))
+            return 0;
+
+        if (!GetThreadSelectorEntry(ht, c.SegFs, &ldt))
+            return 0;
+
+        *out = (DWORD)ldt.BaseLow | ((DWORD)ldt.HighWord.Bytes.BaseMid << 16) | ((DWORD)ldt.HighWord.Bytes.BaseHi << 24);
+        return 1;
+    }
 }
 
 void read_all_registers(char* out, int outsz) {

@@ -50,6 +50,13 @@ struct modules {
     char path[MAX_MODULE_PATH];
 };
 
+#define MAX_VFILES 16
+#define VFILE_FD_BASE 100
+struct vfile_slot {
+    int in_use;
+    HANDLE handle;
+};
+
 #define LIBRARIES_XML_SIZE 16384
 
 struct rsp_context {
@@ -102,6 +109,7 @@ struct module_context {
     char maps_buf[MAPS_BUF_SIZE];
     int maps_len;
     int maps_fd_open;
+    struct vfile_slot vfiles[MAX_VFILES];
     char exec_file[MAX_MODULE_PATH];
     char libraries_xml[LIBRARIES_XML_SIZE];
     int libraries_xml_len;
