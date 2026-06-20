@@ -86,8 +86,10 @@ int core(int argc, char** argv) {
         goto done;
     }
 
-    if (!launch_debuggee(cmdline))
+    if (!launch_debuggee(cmdline)) {
+        fprintf(stderr, "Debuggee did not start cleanly; not entering the GDB command loop.\n");
         goto done;
+    }
     debuggee_started = 1;
 
     while (recv_packet(g_ctx.rsp.pkt, sizeof(g_ctx.rsp.pkt))) {
@@ -127,7 +129,7 @@ done:
 
 int main(int argc, char** argv) {
 
-    fprintf(stdout, "gdbserver9x - version 1.2.30052026\n");
+    fprintf(stdout, "gdbserver9x - version 1.2.20062026\n");
 
     do_logging = (getenv("GDBLOG") != NULL);
     do_restart = (getenv("GDBRESTART") != NULL);

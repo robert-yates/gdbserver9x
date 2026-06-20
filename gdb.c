@@ -493,6 +493,11 @@ done:
 int do_continue_common(char* reply, int replysz) {
     int r;
 
+    if (g_ctx.dbg.process_exited) {
+        make_stop_reply(reply, replysz);
+        return 1;
+    }
+
     r = step_over_breakpoint_for_continue();
 
     if (r == 0) {
@@ -632,8 +637,8 @@ void make_stop_reply(char* out, int outsz) {
 
     out[0] = '\0';
 
-    if (g_ctx.dbg.last_event.dwDebugEventCode == EXIT_PROCESS_DEBUG_EVENT) {
-        sprintf(out, "W%02lx", g_ctx.dbg.last_event.u.ExitProcess.dwExitCode & 0xff);
+    if (g_ctx.dbg.process_exited) {
+        sprintf(out, "W%02lx", g_ctx.dbg.exit_code & 0xff);
         return;
     }
 

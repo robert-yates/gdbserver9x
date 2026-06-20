@@ -71,6 +71,8 @@ struct dbg_context {
     DWORD last_signal;
     DEBUG_EVENT last_event;
     int have_pending_event;
+    int process_exited;
+    DWORD exit_code;
     struct breakpoints bps[MAX_BREAKPOINTS];
     int inserted_bp_count;
     int last_stop_was_breakpoint;

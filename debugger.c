@@ -109,7 +109,18 @@ int launch_debuggee(const char* cmdline) {
     CloseHandle(pi.hProcess);
     CloseHandle(pi.hThread);
 
-    return wait_for_interesting_stop();
+    if (!wait_for_interesting_stop())
+        return 0;
+
+    if (g_ctx.dbg.process_exited) {
+        fprintf(stdout,
+                "[launch_debuggee]: '%s' exited during startup (code 0x%lx) before reaching its entry point.\n"
+                "  This usually means a missing DLL or failed initialization - there is nothing to debug.\n",
+                cmdline, g_ctx.dbg.exit_code);
+        return 0;
+    }
+
+    return 1;
 }
 
 int wait_for_interesting_stop() {
@@ -130,6 +141,8 @@ int wait_for_interesting_stop() {
             case CREATE_PROCESS_DEBUG_EVENT: {
                 printf("[debugger]: CREATE_PROCESS_DEBUG_EVENT pid=%lu tid=%lu\n", ev.dwProcessId, ev.dwThreadId);
                 g_ctx.mod.modules_changed = 1;
+                g_ctx.dbg.process_exited = 0;
+                g_ctx.dbg.exit_code = 0;
                 g_ctx.dbg.process_id = ev.dwProcessId;
                 g_ctx.dbg.process_handle = ev.u.CreateProcessInfo.hProcess;
                 g_ctx.mod.main_module_base = (DWORD)ev.u.CreateProcessInfo.lpBaseOfImage;
@@ -174,8 +187,14 @@ int wait_for_interesting_stop() {
             }
 
             case EXIT_PROCESS_DEBUG_EVENT: {
-                printf("[debugger]: EXIT_PROCESS_DEBUG_EVENT pid=%lu tid=%lu\n", ev.dwProcessId, ev.dwThreadId);
+                printf("[debugger]: EXIT_PROCESS_DEBUG_EVENT pid=%lu tid=%lu exit_code=0x%lx\n", ev.dwProcessId, ev.dwThreadId,
+                       ev.u.ExitProcess.dwExitCode);
                 g_ctx.dbg.last_signal = 0;
+                g_ctx.dbg.process_exited = 1;
+                g_ctx.dbg.exit_code = ev.u.ExitProcess.dwExitCode;
+
+                ContinueDebugEvent(ev.dwProcessId, ev.dwThreadId, DBG_CONTINUE);
+                g_ctx.dbg.have_pending_event = 0;
                 return 1;
             }
 
@@ -955,6 +974,11 @@ int step_over_breakpoint_for_continue(void) {
 
 int step_once_for_frontend(char* reply, int replysz) {
     int idx;
+
+    if (g_ctx.dbg.process_exited) {
+        make_stop_reply(reply, replysz);
+        return 1;
+    }
 
     idx = find_bp_at_current_eip();
 
