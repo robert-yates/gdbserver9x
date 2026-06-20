@@ -204,6 +204,7 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
                       "QListThreadsInStopReply+;"
                       "qXfer:features:read+;"
                       "qXfer:exec-file:read+;"
+                      "qXfer:libraries:read+;"
                       "swbreak+");
         RETURN_HANDLE_PACKET(PACKET_HANDLED);
     }
@@ -342,6 +343,10 @@ int handle_packet(const char* pkt_in, char* reply, int replysz) {
     if (strncmp(pkt, "qXfer:features:read:", 20) == 0) {
         handle_qxfer_features(pkt, reply, replysz);
         RETURN_HANDLE_PACKET(PACKET_HANDLED);
+    }
+    // ---------------------------------------------------------------------------------
+    if (strncmp(pkt, "qXfer:libraries:read:", 21) == 0) {
+        RETURN_HANDLE_PACKET(handle_qxfer_libraries(pkt, reply, replysz));
     }
     // ---------------------------------------------------------------------------------
     if (pkt[0] == 'p') {
@@ -791,6 +796,71 @@ void handle_qxfer_features(const char* pkt, char* reply, int replysz) {
 
     memcpy(reply + 1, g_target_xml + offset, n);
     reply[1 + n] = 0;
+}
+
+int handle_qxfer_libraries(const char* pkt, char* reply, int replysz) {
+    const char* prefix = "qXfer:libraries:read:";
+    const char* p;
+    const char* offstr;
+    unsigned long offset;
+    unsigned long length;
+    unsigned long xml_len;
+    unsigned long n;
+
+    if (strncmp(pkt, prefix, strlen(prefix)) != 0) {
+        reply[0] = 0;
+        return 1;
+    }
+
+    /*
+       Format:
+           qXfer:libraries:read:<annex>:offset,length
+       The annex is empty for libraries, e.g. "qXfer:libraries:read::0,1eff".
+    */
+    p = pkt + strlen(prefix);
+
+    p = strchr(p, ':'); /* skip the (empty) annex */
+    if (!p) {
+        strcpy(reply, "E22");
+        return 1;
+    }
+
+    offstr = p + 1;
+    p = strchr(offstr, ',');
+    if (!p) {
+        strcpy(reply, "E22");
+        return 1;
+    }
+
+    offset = strtoul(offstr, NULL, 16);
+    length = strtoul(p + 1, NULL, 16);
+
+    /* Rebuild the snapshot at the start of a transfer; serve chunks after. */
+    if (offset == 0)
+        build_libraries_xml();
+
+    xml_len = (unsigned long)g_ctx.mod.libraries_xml_len;
+
+    if (offset >= xml_len) {
+        strcpy(reply, "l");
+        return 1;
+    }
+
+    n = xml_len - offset;
+
+    if (n > length)
+        n = length;
+
+    if (n > (unsigned long)(replysz - 2))
+        n = replysz - 2;
+
+    /* l = final chunk, m = ask again with larger offset */
+    reply[0] = ((offset + n) >= xml_len) ? 'l' : 'm';
+
+    memcpy(reply + 1, g_ctx.mod.libraries_xml + offset, n);
+    reply[1 + n] = 0;
+
+    return 1;
 }
 
 int is_proc_maps_path(const char* path) {
